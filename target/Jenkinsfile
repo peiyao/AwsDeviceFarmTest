@@ -1,4 +1,12 @@
 pipeline {
+ agent {
+   label 'kubernetes'
+ }
+
+ options {
+   ansiColor('xterm')
+   buildDiscarder(logRotator(numToKeepStr: '10', daysToKeepStr: '10'))
+ }
  stage('Clone') {
       echo "1.Clone Stage"
     }
