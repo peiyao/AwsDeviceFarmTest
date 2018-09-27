@@ -1,18 +1,43 @@
 pipeline {
- agent {
-   label 'kubernetes'
- }
+checkout scm
 
- options {
-   ansiColor('xterm')
-   buildDiscarder(logRotator(numToKeepStr: '10', daysToKeepStr: '10'))
- }
+   sh 'chmod a+x scripts/make_features'
 
- stages {
-   stage('Build') {
-     steps {
-       sh 'echo hello'
-     }
-   }
- }
+   sh 'bash scripts/make_features'
+
+   step ([$class: 'CopyArtifact',
+
+                 projectName: params.cc_android_job,
+
+                 filter: '**/app-commcare-debug.apk',
+
+                 fingerprintArtifacts: true,
+
+                 flatten: true]);
+
+   step([$class: 'AWSDeviceFarmRecorder',
+
+                       projectName: 'commcare-odk',
+
+                       devicePoolName: asus,
+
+                       runName: params.stageString,
+
+                       appArtifact: 'app-commcare-debug.apk',
+
+                       testToRun: 'CALABASH',
+
+                       calabashFeatures: 'aws/features.zip',
+
+                       calabashTags: params.tag,
+
+                       isRunUnmetered: true,
+
+                       storeResults: true,
+
+                       ignoreRunError: false,
+
+                   ])
+
+}
 }
