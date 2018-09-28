@@ -1,43 +1,53 @@
-pipeline {
-checkout scm
+node() {
+  deleteDir()
 
-   sh 'chmod a+x scripts/make_features'
+  stage 'Checkout'
+  checkout scm
 
-   sh 'bash scripts/make_features'
+  stage 'Create Env'
+  def buildEnv = docker.build 'androidproject:latest', 'release'
+  buildEnv.inside {
+    // Create the key needed for building debug releases
+    sh '''mkdir -p ?/.android
+          keytool -genkey -v -keystore ?/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -dname "CN=Android Debug,O=Android,C=US"
+       '''
 
-   step ([$class: 'CopyArtifact',
+    stage 'Build'
+    sh './gradlew clean assembleDebug'
+    archive '**/sampleApp.apk'
 
-                 projectName: params.cc_android_job,
+    stage 'Quality'
+    sh './gradlew lint'
+    stash includes: '*/build/outputs/lint-results*.xml', name: 'lint-reports'
 
-                 filter: '**/app-commcare-debug.apk',
+    stage 'Test (unit)'
+    try {
+      sh './gradlew test'
+    } catch (err) {
+        currentBuild.result = 'UNSTABLE'
+    }
+    stash includes: '**/test-results/**/*.xml', name: 'junit-reports'
 
-                 fingerprintArtifacts: true,
-
-                 flatten: true]);
-
-   step([$class: 'AWSDeviceFarmRecorder',
-
-                       projectName: 'commcare-odk',
-
-                       devicePoolName: asus,
-
-                       runName: params.stageString,
-
-                       appArtifact: 'app-commcare-debug.apk',
-
-                       testToRun: 'CALABASH',
-
-                       calabashFeatures: 'aws/features.zip',
-
-                       calabashTags: params.tag,
-
-                       isRunUnmetered: true,
-
-                       storeResults: true,
-
-                       ignoreRunError: false,
-
-                   ])
-
+    stage 'Test (device)'
+    sh '''./gradlew :app:assembleDebug
+          ./gradlew :app:assembleDebugAndroidTest
+       '''
+    // Archive for downstream AWS job
+    archive '**/sampleApp.apk'
+  }
 }
+
+node() {
+  build "${env.JOB_NAME} (AWS)"
+}
+
+stage 'Report'
+node() {
+  deleteDir()
+
+  unstash 'junit-reports'
+  step([$class: 'JUnitResultArchiver', testResults: '**/test-results/**/*.xml'])
+
+  unstash 'lint-reports'
+  step([$class: 'LintPublisher', canComputeNew: false, canRunOnFailed: true, defaultEncoding: '', healthy: '', pattern: '*/build/outputs/lint-results*.xml', unHealthy: ''])
 }
